@@ -101,7 +101,7 @@ runs:
       run: ./gradlew ${{ inputs.publish_task }} --no-daemon
       shell: bash
       env:
-        ORG_GRADLE_PROJECT_signingKey: ${{ inputs.gpg_private_key }}
-        ORG_GRADLE_PROJECT_signingPassword: ${{ inputs.gpg_password }}
+        ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ inputs.gpg_private_key }}
+        ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ inputs.gpg_password }}
         ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ inputs.maven_username }}
         ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ inputs.maven_password }}
