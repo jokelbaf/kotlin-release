@@ -1,0 +1,107 @@
+name: kotlin-release
+description: Create a release when the version in build.gradle.kts differs from the latest tag
+
+inputs:
+  gpg_private_key:
+    description: "ASCII-armored GPG private key for signing Maven artifacts"
+    required: false
+    default: ""
+  gpg_password:
+    description: "GPG key passphrase"
+    required: false
+    default: ""
+  maven_username:
+    description: "Sonatype Central Portal token username"
+    required: false
+    default: ""
+  maven_password:
+    description: "Sonatype Central Portal token password"
+    required: false
+    default: ""
+  publish_task:
+    description: "Gradle task used to publish artifacts"
+    required: false
+    default: "publishToMavenCentral"
+  java_version:
+    description: "Java version to use when publishing"
+    required: false
+    default: "17"
+  gradle_file:
+    description: "Path to build.gradle.kts"
+    required: false
+    default: "build.gradle.kts"
+  cliff_template:
+    description: "URL to git-cliff template configuration"
+    required: false
+    default: "https://raw.githubusercontent.com/jokelbaf/kotlin-release/master/cliff-template.toml"
+
+runs:
+  using: composite
+  steps:
+    - name: Compare versions
+      id: compare-versions
+      run: |
+        GRADLE_FILE="${{ inputs.gradle_file }}"
+
+        LOCAL_VERSION=$(grep -E '^version\s*=\s*"[^"]+"' "$GRADLE_FILE" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+        if [ -z "$LOCAL_VERSION" ]; then
+          echo "Could not extract version from $GRADLE_FILE"
+          exit 1
+        fi
+
+        if [ $(git tag -l | wc -l) -eq 0 ]; then
+          echo "No tags found - proceeding with first release"
+          echo "local_version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        REMOTE_VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+        echo "Remote: $REMOTE_VERSION, Local: $LOCAL_VERSION"
+
+        if [ "$REMOTE_VERSION" = "$LOCAL_VERSION" ]; then
+          echo "Versions match - skipping release"
+          exit 0
+        fi
+
+        echo "local_version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Create local tag
+      if: steps.compare-versions.outputs.local_version != ''
+      run: git tag v${{ steps.compare-versions.outputs.local_version }}
+      shell: bash
+
+    - name: Generate changelog
+      if: steps.compare-versions.outputs.local_version != ''
+      uses: orhun/git-cliff-action@v4
+      with:
+        args: --latest --strip header --config-url ${{ inputs.cliff_template }}
+        version: v2.9.0
+      env:
+        GITHUB_REPO: ${{ github.repository }}
+      id: git-cliff
+
+    - name: Create release
+      if: steps.compare-versions.outputs.local_version != ''
+      uses: softprops/action-gh-release@v2
+      with:
+        body: ${{ steps.git-cliff.outputs.content }}
+        tag_name: v${{ steps.compare-versions.outputs.local_version }}
+
+    - name: Set up Java
+      if: steps.compare-versions.outputs.local_version != '' && inputs.maven_username != ''
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java_version }}
+        distribution: temurin
+
+    - name: Publish to Maven Central
+      if: steps.compare-versions.outputs.local_version != '' && inputs.maven_username != ''
+      run: ./gradlew ${{ inputs.publish_task }} --no-daemon
+      shell: bash
+      env:
+        ORG_GRADLE_PROJECT_signingKey: ${{ inputs.gpg_private_key }}
+        ORG_GRADLE_PROJECT_signingPassword: ${{ inputs.gpg_password }}
+        ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ inputs.maven_username }}
+        ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ inputs.maven_password }}
